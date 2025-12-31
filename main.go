@@ -1,14 +1,15 @@
 package main
 
 import (
+    "crypto/rand"
     "database/sql"
+    "encoding/base64"
     "html/template"
     "log"
     "net/http"
+    "strconv"
     "sync"
     "time"
-    "crypto/rand"
-    "encoding/base64"
 
     _ "github.com/mattn/go-sqlite3"
 )
@@ -44,6 +45,11 @@ func main() {
 	createTemplate := template.Must(template.ParseFiles(
         "templates/base.html",
         "templates/create.html",
+    ))
+
+	postTemplate := template.Must(template.ParseFiles(
+        "templates/base.html",
+        "templates/post.html",
     ))
 
     db, err = sql.Open("sqlite3", "./posts.db?_foreign_keys=on")
@@ -152,6 +158,33 @@ func main() {
         http.Redirect(w, r, "/", http.StatusSeeOther)
     })
 
+    http.HandleFunc("/post", func(w http.ResponseWriter, r *http.Request) {
+        idStr := r.URL.Query().Get("id")
+        if idStr == "" {
+            http.Error(w, "Missing post ID", http.StatusBadRequest)
+            return
+        }
+
+        id, err := strconv.Atoi(idStr)
+        if err != nil {
+            http.Error(w, "Invalid post ID", http.StatusBadRequest)
+            return
+        }
+
+        post, err := getPost(id)
+        if err == sql.ErrNoRows {
+            http.Error(w, "Post not found", http.StatusNotFound)
+            return
+        }
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        postTemplate.ExecuteTemplate(w, "base", post)
+    })
+
     log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
@@ -173,4 +206,13 @@ func getPosts() ([]Post, error) {
     }
 
     return posts, rows.Err()
+}
+
+func getPost(id int) (*Post, error) {
+    var p Post
+    err := db.QueryRow("SELECT id, title, content FROM posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content)
+    if err != nil {
+        return nil, err
+    }
+    return &p, nil
 }

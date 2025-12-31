@@ -1,21 +1,10 @@
-{{define "title"}}Indice{{end}}{{define "content"}}
+{{define "title"}}Indice{{end}}
+{{define "content"}}
+{{range .Posts}}
 <div class="item">
-    <a href="">Questo è il titolo xxx</a>
-    <div>Questo è il contenuto del post</div>
-    <span>1 Gen 2026</span>
+    <a href="/post?id={{.ID}}">{{.Title}}</a>
+    <div>{{.Content}}</div>
 </div>
 <br />
-
-<div class="item">
-    <a href="">Questo è il titolo</a>
-    <div>Questo è il contenuto del post</div>
-    <span>1 Apr 2025</span>
-</div>
-<br />
-
-<div class="item">
-    <a href="">Questo è il titolo</a>
-    <div>Questo è il contenuto del post</div>
-    <span>1 Apr 2025</span>
-</div>
+{{end}}
 {{end}}
