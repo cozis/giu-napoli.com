@@ -46,7 +46,7 @@ func main() {
         "templates/create.html",
     ))
 
-    db, err = sql.Open("sqlite3", "./posts.db")
+    db, err = sql.Open("sqlite3", "./posts.db?_foreign_keys=on")
     if err != nil {
         log.Fatal(err)
     }

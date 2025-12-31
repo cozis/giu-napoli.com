@@ -1,1 +1,1 @@
-[ ] enable foreign keys in sqlite
+[X] enable foreign keys in sqlite
