@@ -1,0 +1,32 @@
+{{define "base"}}
+<html>
+    <head>
+        <title>Giù Napoli - {{template "title" .}}</title>
+        <style>
+            main {
+                width: 400px;
+                margin: auto;
+            }
+            .item {
+                background: #cfc66a;
+            }
+        </style>
+        {{block "head" .}}{{end}}
+    </head>
+    <body>
+        <header>
+            <center>
+                <h2>Giù Napoli</h2>
+                <span>notizie, eventi, discussioni</span>
+            </center>
+        </header>
+        <hr />
+        <main>
+            [ <a href="/">Indice</a> | <a href="/create">Crea</a> ]
+            <br />
+            <br />
+            {{template "content" .}}
+        </main>
+    </body>
+</html>
+{{end}}
