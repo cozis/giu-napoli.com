@@ -19,11 +19,6 @@ type Post struct {
 	Content string
 }
 
-type PageData struct {
-    PageTitle string
-    Posts     []Post
-}
-
 var db *sql.DB
 
 var (
@@ -157,7 +152,7 @@ func main() {
         http.Redirect(w, r, "/", http.StatusSeeOther)
     })
 
-    http.ListenAndServe(":8080", nil)
+    log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 func getPosts() ([]Post, error) {
