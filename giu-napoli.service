@@ -1,0 +1,14 @@
+[Unit]
+Description=Il server di Giu Napoli
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/giu-napoli.com
+ExecStart=/root/giu-napoli.com/giu-napoli
+Restart=always
+RestartSec=5
+Environment=GO_ENV=production
+
+[Install]
+WantedBy=multi-user.target
