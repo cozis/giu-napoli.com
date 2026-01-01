@@ -5,9 +5,13 @@ import (
     "database/sql"
     "encoding/base64"
     "html/template"
+    "io"
     "log"
     "net/http"
+    "os"
+    "path/filepath"
     "strconv"
+    "strings"
     "sync"
     "time"
 
@@ -18,6 +22,7 @@ type Post struct {
 	ID      int
 	Title   string
 	Content string
+	Image   string
 }
 
 type Reply struct {
@@ -44,7 +49,7 @@ func generateRandomToken() string {
 }
 
 func getPosts() ([]Post, error) {
-    rows, err := db.Query("SELECT id, title, content FROM posts")
+    rows, err := db.Query("SELECT id, title, content, COALESCE(image, '') FROM Posts")
     if err != nil {
         return nil, err
     }
@@ -57,6 +62,7 @@ func getPosts() ([]Post, error) {
         	&p.ID,
          	&p.Title,
           	&p.Content,
+          	&p.Image,
         )
         if err != nil {
             return nil, err
@@ -69,7 +75,7 @@ func getPosts() ([]Post, error) {
 
 func getPost(id int) (*Post, error) {
     var p Post
-    err := db.QueryRow("SELECT id, title, content FROM posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content)
+    err := db.QueryRow("SELECT id, title, content, COALESCE(image, '') FROM Posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content, &p.Image)
     if err != nil {
         return nil, err
     }
@@ -189,6 +195,7 @@ func main() {
             id      INTEGER   PRIMARY KEY AUTOINCREMENT,
             title   TEXT      NOT NULL,
             content TEXT,
+            image   TEXT,
             created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS Replies (
@@ -201,6 +208,9 @@ func main() {
             FOREIGN KEY (parent_reply) REFERENCES Replies(id) ON DELETE CASCADE
         );
     `)
+
+    // Add image column if it doesn't exist (for existing databases)
+    db.Exec(`ALTER TABLE Posts ADD COLUMN image TEXT`)
     if err != nil {
         log.Fatal(err)
     }
@@ -250,8 +260,8 @@ func main() {
             return
         }
 
-        // Parse the form data
-        err := r.ParseForm()
+        // Parse the multipart form data (10MB max)
+        err := r.ParseMultipartForm(10 << 20)
         if err != nil {
             http.Error(w, "Bad request", http.StatusBadRequest)
             return
@@ -278,10 +288,52 @@ func main() {
             return
         }
 
+        // Handle image upload
+        var imageName string
+        file, header, err := r.FormFile("image")
+        if err == nil {
+            defer file.Close()
+
+            // Validate file extension
+            ext := strings.ToLower(filepath.Ext(header.Filename))
+            allowedExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
+            if !allowedExts[ext] {
+                http.Error(w, "Invalid image format", http.StatusBadRequest)
+                return
+            }
+
+            // Create uploads directory if it doesn't exist
+            if err := os.MkdirAll("uploads", 0755); err != nil {
+                http.Error(w, "Server error", http.StatusInternalServerError)
+                log.Println(err)
+                return
+            }
+
+            // Generate unique filename
+            imageName = generateRandomToken() + ext
+            destPath := filepath.Join("uploads", imageName)
+
+            // Create destination file
+            destFile, err := os.Create(destPath)
+            if err != nil {
+                http.Error(w, "Server error", http.StatusInternalServerError)
+                log.Println(err)
+                return
+            }
+            defer destFile.Close()
+
+            // Copy uploaded file to destination
+            if _, err := io.Copy(destFile, file); err != nil {
+                http.Error(w, "Server error", http.StatusInternalServerError)
+                log.Println(err)
+                return
+            }
+        }
+
         // Insert into database
         _, err = db.Exec(
-            "INSERT INTO Posts (title, content) VALUES (?, ?)",
-            title, content,
+            "INSERT INTO Posts (title, content, image) VALUES (?, ?, ?)",
+            title, content, imageName,
         )
         if err != nil {
             http.Error(w, "Database error", http.StatusInternalServerError)
@@ -413,6 +465,9 @@ func main() {
 
         postTemplate.ExecuteTemplate(w, "base", data)
     })
+
+    // Serve uploaded images
+    http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
 
     log.Fatal(http.ListenAndServe(":8080", nil))
 }

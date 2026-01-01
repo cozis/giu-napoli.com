@@ -1,7 +1,18 @@
-{{define "head"}}{{end}} {{define "title"}}{{.Post.Title}}{{end}} {{define
+{{define "head"}}
+<style>
+    .post-image {
+        max-width: 100%;
+        height: auto;
+        margin: 10px 0;
+    }
+</style>
+{{end}} {{define "title"}}{{.Post.Title}}{{end}} {{define
 "content"}}
 <article>
     <h3>{{.Post.Title}}</h3>
+    {{if .Post.Image}}
+    <img src="/uploads/{{.Post.Image}}" alt="Post image" class="post-image" />
+    {{end}}
     <div>{{.Post.Content}}</div>
 </article>
 

@@ -9,12 +9,16 @@
     }
 </style>
 {{end}} {{define "title"}}Crea{{end}} {{define "content"}}
-<form action="action-post" method="POST">
+<form action="action-post" method="POST" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="{{.csrf}}" />
     <input type="text" name="title" placeholder="[TITOLO]" />
     <br />
     <br />
     <textarea rows="5" name="content" placeholder="[CONTENUTO]"></textarea>
+    <br />
+    <br />
+    <label>Immagine (opzionale):</label>
+    <input type="file" name="image" accept="image/*" />
     <br />
     <br />
     <input type="submit" value="Pubblica" />
