@@ -1,6 +1,45 @@
-{{define "head"}}{{end}}
-{{define "title"}}{{.Title}}{{end}}
-{{define "content"}}
-<h3>{{.Title}}</h3>
-<div>{{.Content}}</div>
-{{end}}
+{{define "head"}}{{end}} {{define "title"}}{{.Post.Title}}{{end}} {{define
+"content"}}
+<article>
+    <h3>{{.Post.Title}}</h3>
+    <div>{{.Post.Content}}</div>
+</article>
+
+<h2>Comments</h2>
+
+<!-- Top-level reply form -->
+<form action="/action-reply" method="POST" class="reply-form">
+    <input type="hidden" name="csrf" value="{{.csrf}}" />
+    <input type="hidden" name="parent_post" value="{{.Post.ID}}" />
+    <textarea
+        name="content"
+        placeholder="Write a comment..."
+        required
+    ></textarea>
+    <button type="submit">Reply</button>
+</form>
+
+<div class="comments">
+    {{template "replies" dict "Replies" .Replies "PostID" .Post.ID "csrf"
+    .csrf}}
+</div>
+{{end}} {{define "replies"}} {{range .Replies}}
+<div class="reply" style="margin-left: {{multiply .Depth 20}}px;">
+    <p>{{.Content}}</p>
+    <small>{{.Created.Format "Jan 2, 2006 3:04 PM"}}</small>
+
+    <details>
+        <summary>Reply</summary>
+        <form action="/action-reply" method="POST">
+            <input type="hidden" name="csrf" value="{{$.csrf}}" />
+            <input type="hidden" name="parent_post" value="{{$.PostID}}" />
+            <input type="hidden" name="parent_reply" value="{{.ID}}" />
+            <textarea name="content" required></textarea>
+            <button type="submit">Reply</button>
+        </form>
+    </details>
+
+    {{if .Children}} {{template "replies" dict "Replies" .Children "PostID"
+    $.PostID "csrf" $.csrf}} {{end}}
+</div>
+{{end}} {{end}}
