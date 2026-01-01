@@ -1,8 +1,20 @@
+{{define "head"}}
+<style>
+    .post-image {
+        max-width: 100%;
+        height: auto;
+        margin: 10px 0;
+    }
+</style>
+{{end}}
 {{define "title"}}Indice{{end}}
 {{define "content"}}
 {{range .Posts}}
 <div class="item">
     <a href="/post?id={{.ID}}">{{.Title}}</a>
+    {{if .Image}}
+    <img src="/uploads/{{.Image}}" alt="Post image" class="post-image" />
+    {{end}}
     <div>{{.Content}}</div>
 </div>
 <br />
