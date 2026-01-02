@@ -1,56 +1,87 @@
 {{define "head"}}
 <style>
-    .post-image {
-        max-width: 100%;
-        height: auto;
-        margin: 10px 0;
+    .item {
+        background: #ecf2e9;
+        overflow: auto;
+    }
+    .item-left {
+        float: left;
+    }
+    .item-right {
+        float: left;
+        padding: 5px;
+    }
+    .item-image {
+        width: 200px;
+        float: left;
+    }
+    #comment-section {
+        padding: 10px;
+        background: #ecf2e9;
+    }
+    .reply-form {
+        overflow: auto;
+    }
+    .reply-form textarea {
+        width: 100%;
+        height: 70px;
+    }
+    .reply-form button {
+        float: right;
+        margin-top: 15px;
+    }
+    .comments {
+        padding-left: 10px;
     }
 </style>
-{{end}} {{define "title"}}{{.Post.Title}}{{end}} {{define
-"content"}}
-<article>
-    <h3>{{.Post.Title}}</h3>
-    {{if .Post.Image}}
-    <img src="/uploads/{{.Post.Image}}" alt="Post image" class="post-image" />
-    {{end}}
-    <div>{{.Post.Content}}</div>
-</article>
-
-<h2>Comments</h2>
-
-<!-- Top-level reply form -->
-<form action="/action-reply" method="POST" class="reply-form">
-    <input type="hidden" name="csrf" value="{{.csrf}}" />
-    <input type="hidden" name="parent_post" value="{{.Post.ID}}" />
-    <textarea
-        name="content"
-        placeholder="Write a comment..."
-        required
-    ></textarea>
-    <button type="submit">Reply</button>
-</form>
-
-<div class="comments">
-    {{template "replies" dict "Replies" .Replies "PostID" .Post.ID "csrf"
-    .csrf}}
+{{end}} {{define "title"}}{{.Post.Title}}{{end}} {{define "content"}}
+<div class="item">
+    <div class="item-left">
+        {{if .Post.Image}}
+        <img
+            src="/uploads/{{.Post.Image}}"
+            alt="Post image"
+            class="item-image"
+        />
+        {{end}}
+    </div>
+    <div class="item-right">
+        <span>{{.Post.Title}}</span>
+        <br />
+        <br />
+        <div class="item-body">{{.Post.Content}}</div>
+    </div>
 </div>
-{{end}} {{define "replies"}} {{range .Replies}}
-<div class="reply" style="margin-left: {{multiply .Depth 20}}px;">
-    <p>{{.Content}}</p>
-    <small>{{.Created.Format "Jan 2, 2006 3:04 PM"}}</small>
-
-    <details>
-        <summary>Reply</summary>
-        <form action="/action-reply" method="POST">
-            <input type="hidden" name="csrf" value="{{$.csrf}}" />
-            <input type="hidden" name="parent_post" value="{{$.PostID}}" />
-            <input type="hidden" name="parent_reply" value="{{.ID}}" />
-            <textarea name="content" required></textarea>
-            <button type="submit">Reply</button>
-        </form>
-    </details>
-
-    {{if .Children}} {{template "replies" dict "Replies" .Children "PostID"
-    $.PostID "csrf" $.csrf}} {{end}}
+<br />
+<div id="comment-section">
+    <form action="/action-reply" method="POST" class="reply-form">
+        <input type="hidden" name="csrf" value="{{.csrf}}" />
+        <input type="hidden" name="parent_post" value="{{.Post.ID}}" />
+        <textarea name="content" placeholder="[COMMENTO]" required></textarea>
+        <button type="submit">Pubblica</button>
+    </form>
+    <hr />
+    <div class="comments">
+        {{template "replies" dict "Replies" .Replies "PostID" .Post.ID "csrf"
+        .csrf}}
+    </div>
+    {{end}} {{define "replies"}} {{range .Replies}}
+    <div class="reply" style="margin-left: {{multiply .Depth 20}}px;">
+        <p>{{.Content}}</p>
+        <small>{{.Created.Format "Jan 2, 2006 3:04 PM"}}</small>
+        <details>
+            <summary>Rispondi</summary>
+            <form action="/action-reply" method="POST" class="reply-form">
+                <input type="hidden" name="csrf" value="{{$.csrf}}" />
+                <input type="hidden" name="parent_post" value="{{$.PostID}}" />
+                <input type="hidden" name="parent_reply" value="{{.ID}}" />
+                <textarea name="content" required></textarea>
+                <button type="submit">Pubblica</button>
+            </form>
+        </details>
+        <hr />
+        {{if .Children}} {{template "replies" dict "Replies" .Children "PostID"
+        $.PostID "csrf" $.csrf}} {{end}}
+    </div>
+    {{end}} {{end}}
 </div>
-{{end}} {{end}}
