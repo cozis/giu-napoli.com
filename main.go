@@ -34,9 +34,10 @@ const (
 )
 
 type Post struct {
-	ID      int
-	Title   string
-	Content string
+	ID            int
+	Title         string
+	Content       string
+	ImageFilename sql.NullString
 }
 
 type Image struct {
@@ -89,17 +90,6 @@ func main() {
 
     // Ensure schema is created
     _, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT
-        )
-    `)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    _, err = db.Exec(`
         CREATE TABLE IF NOT EXISTS images (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filename TEXT NOT NULL UNIQUE,
@@ -108,6 +98,18 @@ func main() {
             width INTEGER NOT NULL,
             height INTEGER NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    _, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT,
+            image_filename TEXT REFERENCES images(filename)
         )
     `)
     if err != nil {
@@ -153,32 +155,37 @@ func main() {
     })
 
     http.HandleFunc("/action-post", func(w http.ResponseWriter, r *http.Request) {
-
-    	if r.Method != http.MethodPost {
+        if r.Method != http.MethodPost {
             http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
             return
         }
 
-        // Parse the form data
-        err := r.ParseForm()
-        if err != nil {
-            http.Error(w, "Bad request", http.StatusBadRequest)
+        // Limit request body size using MaxBytesReader
+        r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize+1024*1024) // Extra 1MB buffer for form overhead
+
+        // Parse multipart form (supports both regular forms and file uploads)
+        if err := r.ParseMultipartForm(MaxUploadSize); err != nil {
+            if err.Error() == "http: request body too large" {
+                http.Error(w, "Request size exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
+                return
+            }
+            http.Error(w, "Failed to parse form", http.StatusBadRequest)
             return
         }
 
         // Get form values
-        csrf    := r.FormValue("csrf")
-        title   := r.FormValue("title")
+        csrf := r.FormValue("csrf")
+        title := r.FormValue("title")
         content := r.FormValue("content")
 
-       	csrfTableMutex.Lock()
+        csrfTableMutex.Lock()
         expire, ok := csrfTable[csrf]
         delete(csrfTable, csrf)
         csrfTableMutex.Unlock()
 
         if !ok || expire < time.Now().Unix() {
-        	http.Error(w, "Invalid CSRF token", http.StatusBadRequest)
-        	return
+            http.Error(w, "Invalid CSRF token", http.StatusBadRequest)
+            return
         }
 
         // Validate
@@ -187,10 +194,49 @@ func main() {
             return
         }
 
-        // Insert into database
+        // Handle optional image upload
+        var imageFilename sql.NullString
+        file, header, err := r.FormFile("image")
+        if err == nil {
+            defer file.Close()
+
+            // Read file data
+            data, err := io.ReadAll(file)
+            if err != nil {
+                http.Error(w, "Failed to read image file", http.StatusInternalServerError)
+                return
+            }
+
+            // Validate and process the image
+            filename, contentType, processedData, width, height, err := validateAndProcessImage(data, header.Filename)
+            if err != nil {
+                var validationErr *ImageValidationError
+                if errors.As(err, &validationErr) {
+                    http.Error(w, validationErr.Message, http.StatusBadRequest)
+                    return
+                }
+                http.Error(w, "Failed to process image", http.StatusInternalServerError)
+                log.Println(err)
+                return
+            }
+
+            // Save image to database
+            if err := saveImage(filename, contentType, processedData, width, height); err != nil {
+                http.Error(w, "Failed to save image", http.StatusInternalServerError)
+                log.Println(err)
+                return
+            }
+
+            imageFilename = sql.NullString{String: filename, Valid: true}
+        } else if err != http.ErrMissingFile {
+            http.Error(w, "Failed to process image upload", http.StatusBadRequest)
+            return
+        }
+
+        // Insert post into database
         _, err = db.Exec(
-            "INSERT INTO posts (title, content) VALUES (?, ?)",
-            title, content,
+            "INSERT INTO posts (title, content, image_filename) VALUES (?, ?, ?)",
+            title, content, imageFilename,
         )
         if err != nil {
             http.Error(w, "Database error", http.StatusInternalServerError)
@@ -227,67 +273,6 @@ func main() {
         }
 
         postTemplate.ExecuteTemplate(w, "base", post)
-    })
-
-    // Image upload handler
-    http.HandleFunc("/upload-image", func(w http.ResponseWriter, r *http.Request) {
-        if r.Method != http.MethodPost {
-            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-            return
-        }
-
-        // Limit request body size using MaxBytesReader
-        r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize+1024) // Extra buffer for form overhead
-
-        // Parse multipart form with size limit
-        if err := r.ParseMultipartForm(MaxUploadSize); err != nil {
-            if err.Error() == "http: request body too large" {
-                http.Error(w, "File size exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
-                return
-            }
-            http.Error(w, "Failed to parse form", http.StatusBadRequest)
-            return
-        }
-
-        // Get the file from the form
-        file, header, err := r.FormFile("image")
-        if err != nil {
-            http.Error(w, "No image file provided", http.StatusBadRequest)
-            return
-        }
-        defer file.Close()
-
-        // Read file data
-        data, err := io.ReadAll(file)
-        if err != nil {
-            http.Error(w, "Failed to read file", http.StatusInternalServerError)
-            return
-        }
-
-        // Validate and process the image
-        filename, contentType, processedData, width, height, err := validateAndProcessImage(data, header.Filename)
-        if err != nil {
-            var validationErr *ImageValidationError
-            if errors.As(err, &validationErr) {
-                http.Error(w, validationErr.Message, http.StatusBadRequest)
-                return
-            }
-            http.Error(w, "Failed to process image", http.StatusInternalServerError)
-            log.Println(err)
-            return
-        }
-
-        // Save to database
-        if err := saveImage(filename, contentType, processedData, width, height); err != nil {
-            http.Error(w, "Failed to save image", http.StatusInternalServerError)
-            log.Println(err)
-            return
-        }
-
-        // Return the filename/URL in JSON response
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(http.StatusCreated)
-        fmt.Fprintf(w, `{"filename":"%s","url":"/images/%s","width":%d,"height":%d}`, filename, filename, width, height)
     })
 
     // Image serving handler
@@ -327,7 +312,7 @@ func main() {
 }
 
 func getPosts() ([]Post, error) {
-    rows, err := db.Query("SELECT id, title, content FROM posts")
+    rows, err := db.Query("SELECT id, title, content, image_filename FROM posts")
     if err != nil {
         return nil, err
     }
@@ -336,7 +321,7 @@ func getPosts() ([]Post, error) {
     var posts []Post
     for rows.Next() {
         var p Post
-        err := rows.Scan(&p.ID, &p.Title, &p.Content)
+        err := rows.Scan(&p.ID, &p.Title, &p.Content, &p.ImageFilename)
         if err != nil {
             return nil, err
         }
@@ -348,7 +333,7 @@ func getPosts() ([]Post, error) {
 
 func getPost(id int) (*Post, error) {
     var p Post
-    err := db.QueryRow("SELECT id, title, content FROM posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content)
+    err := db.QueryRow("SELECT id, title, content, image_filename FROM posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content, &p.ImageFilename)
     if err != nil {
         return nil, err
     }
