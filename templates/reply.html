@@ -1,0 +1,46 @@
+{{define "head"}}
+<style>
+    .parent-comment {
+        background: #ecf2e9;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .reply-form {
+        overflow: auto;
+    }
+    .reply-form textarea {
+        width: 100%;
+        height: 100px;
+    }
+    .reply-form button {
+        float: right;
+        margin-top: 15px;
+    }
+    .back-link {
+        margin-bottom: 15px;
+    }
+</style>
+{{end}}
+
+{{define "title"}}Rispondi al commento{{end}}
+
+{{define "content"}}
+<div class="back-link">
+    <a href="/post?id={{.PostID}}">&larr; Torna al post</a>
+</div>
+
+<h3>Rispondi a questo commento:</h3>
+
+<div class="parent-comment">
+    <p>{{.Reply.Content}}</p>
+    <small>{{.Reply.Created.Format "Jan 2, 2006 3:04 PM"}}</small>
+</div>
+
+<form action="/action-reply" method="POST" class="reply-form">
+    <input type="hidden" name="csrf" value="{{.csrf}}" />
+    <input type="hidden" name="parent_post" value="{{.PostID}}" />
+    <input type="hidden" name="parent_reply" value="{{.Reply.ID}}" />
+    <textarea name="content" placeholder="Scrivi la tua risposta..." required></textarea>
+    <button type="submit">Pubblica</button>
+</form>
+{{end}}

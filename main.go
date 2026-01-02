@@ -82,6 +82,20 @@ func getPost(id int) (*Post, error) {
     return &p, nil
 }
 
+// getReply fetches a single reply by ID
+func getReply(id int) (*Reply, error) {
+	var r Reply
+	err := db.QueryRow(`
+		SELECT id, parent_post, parent_reply, content, created
+		FROM Replies
+		WHERE id = ?
+	`, id).Scan(&r.ID, &r.ParentPost, &r.ParentReply, &r.Content, &r.Created)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // getRepliesTree fetches all replies for a post and builds them into a tree
 func getRepliesTree(postID int) ([]*Reply, error) {
 	rows, err := db.Query(`
@@ -181,6 +195,11 @@ func main() {
 	postTemplate := template.Must(template.New("base.html").Funcs(funcMap).ParseFiles(
         "templates/base.html",
         "templates/post.html",
+    ))
+
+	replyTemplate := template.Must(template.ParseFiles(
+        "templates/base.html",
+        "templates/reply.html",
     ))
 
     db, err = sql.Open("sqlite3", "./posts.db?_foreign_keys=on")
@@ -407,8 +426,8 @@ func main() {
             return
         }
 
-        // Redirect back to home page
-        http.Redirect(w, r, "/", http.StatusSeeOther)
+        // Redirect back to post page
+        http.Redirect(w, r, "/post?id="+parentPostIDStr, http.StatusSeeOther)
     })
 
     http.HandleFunc("/post", func(w http.ResponseWriter, r *http.Request) {
@@ -464,6 +483,53 @@ func main() {
         }
 
         postTemplate.ExecuteTemplate(w, "base", data)
+    })
+
+    http.HandleFunc("/reply", func(w http.ResponseWriter, r *http.Request) {
+        idStr := r.URL.Query().Get("id")
+        if idStr == "" {
+            http.Error(w, "Missing reply ID", http.StatusBadRequest)
+            return
+        }
+
+        id, err := strconv.Atoi(idStr)
+        if err != nil {
+            http.Error(w, "Invalid reply ID", http.StatusBadRequest)
+            return
+        }
+
+        reply, err := getReply(id)
+        if err == sql.ErrNoRows {
+            http.Error(w, "Reply not found", http.StatusNotFound)
+            return
+        }
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Generate CSRF token for reply form
+        now := time.Now().Unix()
+        var relative_expire int64 = 300
+
+        csrfTableMutex.Lock()
+        for token, expire := range csrfTable {
+            if expire < now {
+                delete(csrfTable, token)
+            }
+        }
+        token := generateRandomToken()
+        csrfTable[token] = now + relative_expire
+        csrfTableMutex.Unlock()
+
+        data := map[string]any{
+            "Reply":  reply,
+            "PostID": reply.ParentPost,
+            "csrf":   token,
+        }
+
+        replyTemplate.ExecuteTemplate(w, "base", data)
     })
 
     // Serve uploaded images
