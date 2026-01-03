@@ -38,7 +38,6 @@
 
 <form action="/action-reply" method="POST" class="reply-form">
     <input type="hidden" name="csrf" value="{{.csrf}}" />
-    <input type="hidden" name="parent_post" value="{{.PostID}}" />
     <input type="hidden" name="parent_reply" value="{{.Reply.ID}}" />
     <textarea name="content" placeholder="Scrivi la tua risposta..." required></textarea>
     <button type="submit">Pubblica</button>

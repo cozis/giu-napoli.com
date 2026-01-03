@@ -414,7 +414,6 @@ func main() {
             return
         }
         csrf             := r.FormValue("csrf")
-        parentPostIDStr  := r.FormValue("parent_post")
         parentReplyIDStr := r.FormValue("parent_reply")
         content          := r.FormValue("content")
 
@@ -430,21 +429,25 @@ func main() {
 
         // Validate
 
-        parentPostID, err := strconv.Atoi(parentPostIDStr)
+        parentReplyID, err := strconv.Atoi(parentReplyIDStr)
         if err != nil {
-            http.Error(w, "Parent post ID is required", http.StatusBadRequest)
+            http.Error(w, "Parent reply ID is required", http.StatusBadRequest)
             return
         }
 
-        var parentReplyID *int
-        if parentReplyIDStr != "" {
-	       	tmp, err := strconv.Atoi(parentReplyIDStr)
-	        if err != nil {
-	            http.Error(w, "Invalid reply ID", http.StatusBadRequest)
-	            return
-	        }
-			parentReplyID = &tmp
+        // Get the parent reply to infer the post ID
+        parentReply, err := getReply(parentReplyID)
+        if err == sql.ErrNoRows {
+            http.Error(w, "Parent reply not found", http.StatusBadRequest)
+            return
         }
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        parentPostID := parentReply.ParentPost
 
         if content == "" {
             http.Error(w, "Content is required", http.StatusBadRequest)
@@ -463,7 +466,7 @@ func main() {
         }
 
         // Redirect back to post page
-        http.Redirect(w, r, "/post?id="+parentPostIDStr, http.StatusSeeOther)
+        http.Redirect(w, r, "/post?id="+strconv.Itoa(parentPostID), http.StatusSeeOther)
     })
 
     http.HandleFunc("/post", func(w http.ResponseWriter, r *http.Request) {
