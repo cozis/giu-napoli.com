@@ -416,6 +416,12 @@ func main() {
     })
 
     http.HandleFunc("/create", func(w http.ResponseWriter, r *http.Request) {
+        // Require authentication
+        user := getUserFromRequest(r)
+        if user == nil {
+            http.Redirect(w, r, "/login", http.StatusSeeOther)
+            return
+        }
 
     	now := time.Now().Unix()
      	var relative_expire int64 = 300
@@ -440,6 +446,13 @@ func main() {
     http.HandleFunc("/action-post", func(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodPost {
             http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+
+        // Require authentication
+        user := getUserFromRequest(r)
+        if user == nil {
+            http.Error(w, "Authentication required", http.StatusUnauthorized)
             return
         }
 
@@ -535,6 +548,13 @@ func main() {
 
     	if r.Method != http.MethodPost {
             http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+
+        // Require authentication
+        user := getUserFromRequest(r)
+        if user == nil {
+            http.Error(w, "Authentication required", http.StatusUnauthorized)
             return
         }
 
@@ -653,6 +673,13 @@ func main() {
     })
 
     http.HandleFunc("/reply", func(w http.ResponseWriter, r *http.Request) {
+        // Require authentication
+        user := getUserFromRequest(r)
+        if user == nil {
+            http.Redirect(w, r, "/login", http.StatusSeeOther)
+            return
+        }
+
         idStr := r.URL.Query().Get("id")
         if idStr == "" {
             http.Error(w, "Missing reply ID", http.StatusBadRequest)
