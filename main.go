@@ -227,6 +227,11 @@ func main() {
         "templates/reply.html",
     ))
 
+	loginTemplate := template.Must(template.ParseFiles(
+        "templates/base.html",
+        "templates/login.html",
+    ))
+
     db, err = sql.Open("sqlite3", "./posts.db?_foreign_keys=on")
     if err != nil {
         log.Fatal(err)
@@ -599,6 +604,70 @@ func main() {
         w.Header().Set("Content-Length", strconv.Itoa(len(img.Data)))
         w.Header().Set("Cache-Control", "public, max-age=31536000") // Cache for 1 year
         w.Write(img.Data)
+    })
+
+    http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+
+    	now := time.Now().Unix()
+     	var relative_expire int64 = 300
+
+     	csrfTableMutex.Lock()
+		for token, expire := range csrfTable {
+			if expire < now {
+				delete(csrfTable, token)
+			}
+		}
+		token := generateRandomToken()
+      	csrfTable[token] = now + relative_expire
+      	csrfTableMutex.Unlock()
+
+    	data := map[string]any{
+     		"csrf": token,
+     	}
+
+     	loginTemplate.ExecuteTemplate(w, "base", data)
+    })
+
+    http.HandleFunc("/action-login", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+
+        // Parse the form data
+        err := r.ParseForm()
+        if err != nil {
+            http.Error(w, "Bad request", http.StatusBadRequest)
+            return
+        }
+
+        csrf := r.FormValue("csrf")
+        username := r.FormValue("username")
+        password := r.FormValue("password")
+
+        csrfTableMutex.Lock()
+        expire, ok := csrfTable[csrf]
+        delete(csrfTable, csrf)
+        csrfTableMutex.Unlock()
+
+        if !ok || expire < time.Now().Unix() {
+            http.Error(w, "Invalid CSRF token", http.StatusBadRequest)
+            return
+        }
+
+        // Validate
+        if username == "" {
+            http.Error(w, "Username is required", http.StatusBadRequest)
+            return
+        }
+        if password == "" {
+            http.Error(w, "Password is required", http.StatusBadRequest)
+            return
+        }
+
+        // TODO: Implement actual authentication logic here
+        // For now, just redirect to home page
+        http.Redirect(w, r, "/", http.StatusSeeOther)
     })
 
     log.Fatal(http.ListenAndServe(":8080", nil))

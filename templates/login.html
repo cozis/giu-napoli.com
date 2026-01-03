@@ -1,0 +1,22 @@
+{{define "head"}}
+<style>
+    input[type="text"],
+    input[type="password"] {
+        width: 100%;
+    }
+    input[type="submit"] {
+        float: right;
+    }
+</style>
+{{end}} {{define "title"}}Accedi{{end}} {{define "content"}}
+<form action="action-login" method="POST">
+    <input type="hidden" name="csrf" value="{{.csrf}}" />
+    <input type="text" name="username" placeholder="[NOME UTENTE]" />
+    <br />
+    <br />
+    <input type="password" name="password" placeholder="[PASSWORD]" />
+    <br />
+    <br />
+    <input type="submit" value="Accedi" />
+</form>
+{{end}}
