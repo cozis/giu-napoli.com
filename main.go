@@ -23,6 +23,7 @@ import (
     "time"
 
     _ "github.com/mattn/go-sqlite3"
+    "golang.org/x/crypto/bcrypt"
     _ "golang.org/x/image/webp"
 )
 
@@ -58,6 +59,21 @@ type Image struct {
 	Width       int
 	Height      int
 	CreatedAt   time.Time
+}
+
+type User struct {
+	ID           int
+	Username     string
+	PasswordHash string
+	CreatedAt    time.Time
+}
+
+type Session struct {
+	ID        int
+	UserID    int
+	Token     string
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
 var db *sql.DB
@@ -188,6 +204,97 @@ func setDepths(replies []*Reply, depth int) {
 	}
 }
 
+// getUserByUsername fetches a user by username
+func getUserByUsername(username string) (*User, error) {
+	var u User
+	err := db.QueryRow(
+		"SELECT id, username, password_hash, created_at FROM Users WHERE username = ?",
+		username,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// hashPassword hashes a password using bcrypt
+func hashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// checkPassword verifies a password against a hash
+func checkPassword(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+// createSession creates a new session for a user
+func createSession(userID int) (string, error) {
+	token := generateRandomToken()
+	expiresAt := time.Now().Add(24 * time.Hour * 7) // 7 days
+
+	_, err := db.Exec(
+		"INSERT INTO Sessions (user_id, token, expires_at) VALUES (?, ?, ?)",
+		userID, token, expiresAt,
+	)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// getSessionByToken fetches a session by token
+func getSessionByToken(token string) (*Session, error) {
+	var s Session
+	err := db.QueryRow(
+		"SELECT id, user_id, token, expires_at, created_at FROM Sessions WHERE token = ?",
+		token,
+	).Scan(&s.ID, &s.UserID, &s.Token, &s.ExpiresAt, &s.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// deleteSession removes a session by token
+func deleteSession(token string) error {
+	_, err := db.Exec("DELETE FROM Sessions WHERE token = ?", token)
+	return err
+}
+
+// getUserFromRequest gets the current user from the session cookie
+func getUserFromRequest(r *http.Request) *User {
+	cookie, err := r.Cookie("session")
+	if err != nil {
+		return nil
+	}
+
+	session, err := getSessionByToken(cookie.Value)
+	if err != nil {
+		return nil
+	}
+
+	// Check if session is expired
+	if time.Now().After(session.ExpiresAt) {
+		deleteSession(cookie.Value)
+		return nil
+	}
+
+	var u User
+	err = db.QueryRow(
+		"SELECT id, username, password_hash, created_at FROM Users WHERE id = ?",
+		session.UserID,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	if err != nil {
+		return nil
+	}
+	return &u
+}
+
 func main() {
 
 	var err error
@@ -264,6 +371,20 @@ func main() {
           	created      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           	FOREIGN KEY (parent_post)  REFERENCES Posts(id)   ON DELETE CASCADE,
             FOREIGN KEY (parent_reply) REFERENCES Replies(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS Users (
+            id            INTEGER   PRIMARY KEY AUTOINCREMENT,
+            username      TEXT      NOT NULL UNIQUE,
+            password_hash TEXT      NOT NULL,
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS Sessions (
+            id         INTEGER   PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER   NOT NULL,
+            token      TEXT      NOT NULL UNIQUE,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES Users(id) ON DELETE CASCADE
         );
     `)
     if err != nil {
@@ -665,8 +786,61 @@ func main() {
             return
         }
 
-        // TODO: Implement actual authentication logic here
-        // For now, just redirect to home page
+        // Get user by username
+        user, err := getUserByUsername(username)
+        if err == sql.ErrNoRows {
+            http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+            return
+        }
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Check password
+        if !checkPassword(password, user.PasswordHash) {
+            http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+            return
+        }
+
+        // Create session
+        sessionToken, err := createSession(user.ID)
+        if err != nil {
+            http.Error(w, "Failed to create session", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Set session cookie
+        http.SetCookie(w, &http.Cookie{
+            Name:     "session",
+            Value:    sessionToken,
+            Path:     "/",
+            HttpOnly: true,
+            SameSite: http.SameSiteStrictMode,
+            MaxAge:   60 * 60 * 24 * 7, // 7 days
+        })
+
+        http.Redirect(w, r, "/", http.StatusSeeOther)
+    })
+
+    http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+        cookie, err := r.Cookie("session")
+        if err == nil {
+            deleteSession(cookie.Value)
+        }
+
+        // Clear session cookie
+        http.SetCookie(w, &http.Cookie{
+            Name:     "session",
+            Value:    "",
+            Path:     "/",
+            HttpOnly: true,
+            SameSite: http.SameSiteStrictMode,
+            MaxAge:   -1, // Delete cookie
+        })
+
         http.Redirect(w, r, "/", http.StatusSeeOther)
     })
 
