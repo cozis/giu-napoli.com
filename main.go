@@ -34,10 +34,20 @@ const (
 )
 
 type Post struct {
-	ID            int
-	Title         string
-	Content       string
-	ImageFilename sql.NullString
+	ID      int
+	Title   string
+	Content string
+	Image   string
+}
+
+type Reply struct {
+	ID          int
+	ParentPost  int
+	ParentReply sql.NullInt64
+	Content     string
+	Created     time.Time
+	Children    []*Reply // For building the tree
+	Depth       int      // For indentation in templates
 }
 
 type Image struct {
@@ -63,9 +73,139 @@ func generateRandomToken() string {
 	return base64.URLEncoding.EncodeToString(b)
 }
 
+func getPosts() ([]Post, error) {
+    rows, err := db.Query("SELECT id, title, content, COALESCE(image, '') FROM Posts")
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var posts []Post
+    for rows.Next() {
+        var p Post
+        err := rows.Scan(
+        	&p.ID,
+         	&p.Title,
+          	&p.Content,
+          	&p.Image,
+        )
+        if err != nil {
+            return nil, err
+        }
+        posts = append(posts, p)
+    }
+
+    return posts, rows.Err()
+}
+
+func getPost(id int) (*Post, error) {
+    var p Post
+    err := db.QueryRow("SELECT id, title, content, COALESCE(image, '') FROM Posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content, &p.Image)
+    if err != nil {
+        return nil, err
+    }
+    return &p, nil
+}
+
+// getReply fetches a single reply by ID
+func getReply(id int) (*Reply, error) {
+	var r Reply
+	err := db.QueryRow(`
+		SELECT id, parent_post, parent_reply, content, created
+		FROM Replies
+		WHERE id = ?
+	`, id).Scan(&r.ID, &r.ParentPost, &r.ParentReply, &r.Content, &r.Created)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// getRepliesTree fetches all replies for a post and builds them into a tree
+func getRepliesTree(postID int) ([]*Reply, error) {
+	rows, err := db.Query(`
+		SELECT id, parent_post, parent_reply, content, created
+		FROM Replies
+		WHERE parent_post = ?
+		ORDER BY created ASC
+	`, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// First, collect all replies into a map
+	replyMap := make(map[int]*Reply)
+	var allReplies []*Reply
+
+	for rows.Next() {
+		var r Reply
+		err := rows.Scan(
+			&r.ID,
+			&r.ParentPost,
+			&r.ParentReply,
+			&r.Content,
+			&r.Created,
+		)
+		if err != nil {
+			return nil, err
+		}
+		r.Children = []*Reply{}
+		replyMap[r.ID] = &r
+		allReplies = append(allReplies, &r)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Build the tree structure
+	var rootReplies []*Reply
+
+	for _, reply := range allReplies {
+		if reply.ParentReply.Valid {
+			// This is a child reply
+			parentID := int(reply.ParentReply.Int64)
+			if parent, ok := replyMap[parentID]; ok {
+				parent.Children = append(parent.Children, reply)
+			}
+		} else {
+			// This is a top-level reply to the post
+			rootReplies = append(rootReplies, reply)
+		}
+	}
+
+	// Set depths for indentation
+	setDepths(rootReplies, 0)
+
+	return rootReplies, nil
+}
+
+func setDepths(replies []*Reply, depth int) {
+	for _, r := range replies {
+		r.Depth = depth
+		setDepths(r.Children, depth+1)
+	}
+}
+
 func main() {
 
 	var err error
+
+	// Template functions for post.html
+	funcMap := template.FuncMap{
+		"multiply": func(a, b int) int {
+			return a * b
+		},
+		"dict": func(values ...any) map[string]any {
+			d := make(map[string]any)
+			for i := 0; i < len(values); i += 2 {
+				key, _ := values[i].(string)
+				d[key] = values[i+1]
+			}
+			return d
+		},
+	}
 
 	indexTemplate := template.Must(template.ParseFiles(
         "templates/base.html",
@@ -77,9 +217,14 @@ func main() {
         "templates/create.html",
     ))
 
-	postTemplate := template.Must(template.ParseFiles(
+	postTemplate := template.Must(template.New("base.html").Funcs(funcMap).ParseFiles(
         "templates/base.html",
         "templates/post.html",
+    ))
+
+	replyTemplate := template.Must(template.ParseFiles(
+        "templates/base.html",
+        "templates/reply.html",
     ))
 
     db, err = sql.Open("sqlite3", "./posts.db?_foreign_keys=on")
@@ -90,31 +235,38 @@ func main() {
 
     // Ensure schema is created
     _, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT NOT NULL UNIQUE,
-            content_type TEXT NOT NULL,
-            data BLOB NOT NULL,
-            width INTEGER NOT NULL,
-            height INTEGER NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
+        CREATE TABLE IF NOT EXISTS Images (
+            id           INTEGER   PRIMARY KEY AUTOINCREMENT,
+            filename     TEXT      NOT NULL UNIQUE,
+            content_type TEXT      NOT NULL,
+            data         BLOB      NOT NULL,
+            width        INTEGER   NOT NULL,
+            height       INTEGER   NOT NULL,
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS Posts (
+            id      INTEGER   PRIMARY KEY AUTOINCREMENT,
+            title   TEXT      NOT NULL,
+            content TEXT,
+            image   TEXT      REFERENCES Images(filename),
+            created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS Replies (
+        	id           INTEGER   PRIMARY KEY AUTOINCREMENT,
+         	parent_post  INTEGER   NOT NULL,
+          	parent_reply INTEGER,
+         	content      TEXT      NOT NULL,
+          	created      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          	FOREIGN KEY (parent_post)  REFERENCES Posts(id)   ON DELETE CASCADE,
+            FOREIGN KEY (parent_reply) REFERENCES Replies(id) ON DELETE CASCADE
+        );
     `)
     if err != nil {
         log.Fatal(err)
     }
 
-    _, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT,
-            image_filename TEXT REFERENCES images(filename)
-        )
-    `)
-    if err != nil {
-        log.Fatal(err)
-    }
+    // Add image column if it doesn't exist (for existing databases)
+    db.Exec(`ALTER TABLE Posts ADD COLUMN image TEXT`)
 
     http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 
@@ -163,13 +315,13 @@ func main() {
         // Limit request body size using MaxBytesReader
         r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize+1024*1024) // Extra 1MB buffer for form overhead
 
-        // Parse multipart form (supports both regular forms and file uploads)
+        // Parse the multipart form data
         if err := r.ParseMultipartForm(MaxUploadSize); err != nil {
             if err.Error() == "http: request body too large" {
                 http.Error(w, "Request size exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
                 return
             }
-            http.Error(w, "Failed to parse form", http.StatusBadRequest)
+            http.Error(w, "Bad request", http.StatusBadRequest)
             return
         }
 
@@ -194,8 +346,8 @@ func main() {
             return
         }
 
-        // Handle optional image upload
-        var imageFilename sql.NullString
+        // Handle optional image upload with security validation
+        var imageName string
         file, header, err := r.FormFile("image")
         if err == nil {
             defer file.Close()
@@ -207,7 +359,7 @@ func main() {
                 return
             }
 
-            // Validate and process the image
+            // Validate and process the image (security checks + re-encoding)
             filename, contentType, processedData, width, height, err := validateAndProcessImage(data, header.Filename)
             if err != nil {
                 var validationErr *ImageValidationError
@@ -227,16 +379,16 @@ func main() {
                 return
             }
 
-            imageFilename = sql.NullString{String: filename, Valid: true}
+            imageName = filename
         } else if err != http.ErrMissingFile {
             http.Error(w, "Failed to process image upload", http.StatusBadRequest)
             return
         }
 
-        // Insert post into database
+        // Insert into database
         _, err = db.Exec(
-            "INSERT INTO posts (title, content, image_filename) VALUES (?, ?, ?)",
-            title, content, imageFilename,
+            "INSERT INTO Posts (title, content, image) VALUES (?, ?, ?)",
+            title, content, imageName,
         )
         if err != nil {
             http.Error(w, "Database error", http.StatusInternalServerError)
@@ -246,6 +398,72 @@ func main() {
 
         // Redirect back to home page
         http.Redirect(w, r, "/", http.StatusSeeOther)
+    })
+
+    http.HandleFunc("/action-reply", func(w http.ResponseWriter, r *http.Request) {
+
+    	if r.Method != http.MethodPost {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+
+        // Parse the form data
+        err := r.ParseForm()
+        if err != nil {
+            http.Error(w, "Bad request", http.StatusBadRequest)
+            return
+        }
+        csrf             := r.FormValue("csrf")
+        parentPostIDStr  := r.FormValue("parent_post")
+        parentReplyIDStr := r.FormValue("parent_reply")
+        content          := r.FormValue("content")
+
+       	csrfTableMutex.Lock()
+        expire, ok := csrfTable[csrf]
+        delete(csrfTable, csrf)
+        csrfTableMutex.Unlock()
+
+        if !ok || expire < time.Now().Unix() {
+        	http.Error(w, "Invalid CSRF token", http.StatusBadRequest)
+        	return
+        }
+
+        // Validate
+
+        parentPostID, err := strconv.Atoi(parentPostIDStr)
+        if err != nil {
+            http.Error(w, "Parent post ID is required", http.StatusBadRequest)
+            return
+        }
+
+        var parentReplyID *int
+        if parentReplyIDStr != "" {
+	       	tmp, err := strconv.Atoi(parentReplyIDStr)
+	        if err != nil {
+	            http.Error(w, "Invalid reply ID", http.StatusBadRequest)
+	            return
+	        }
+			parentReplyID = &tmp
+        }
+
+        if content == "" {
+            http.Error(w, "Content is required", http.StatusBadRequest)
+            return
+        }
+
+        // Insert into database
+        _, err = db.Exec(
+            "INSERT INTO Replies (parent_post, parent_reply, content) VALUES (?, ?, ?)",
+            parentPostID, parentReplyID, content,
+        )
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Redirect back to post page
+        http.Redirect(w, r, "/post?id="+parentPostIDStr, http.StatusSeeOther)
     })
 
     http.HandleFunc("/post", func(w http.ResponseWriter, r *http.Request) {
@@ -272,10 +490,85 @@ func main() {
             return
         }
 
-        postTemplate.ExecuteTemplate(w, "base", post)
+        // Get the reply tree for this post
+        replies, err := getRepliesTree(id)
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Generate CSRF token for reply form
+        now := time.Now().Unix()
+        var relative_expire int64 = 300
+
+        csrfTableMutex.Lock()
+        for token, expire := range csrfTable {
+            if expire < now {
+                delete(csrfTable, token)
+            }
+        }
+        token := generateRandomToken()
+        csrfTable[token] = now + relative_expire
+        csrfTableMutex.Unlock()
+
+        data := map[string]any{
+            "Post":    post,
+            "Replies": replies,
+            "csrf":    token,
+        }
+
+        postTemplate.ExecuteTemplate(w, "base", data)
     })
 
-    // Image serving handler
+    http.HandleFunc("/reply", func(w http.ResponseWriter, r *http.Request) {
+        idStr := r.URL.Query().Get("id")
+        if idStr == "" {
+            http.Error(w, "Missing reply ID", http.StatusBadRequest)
+            return
+        }
+
+        id, err := strconv.Atoi(idStr)
+        if err != nil {
+            http.Error(w, "Invalid reply ID", http.StatusBadRequest)
+            return
+        }
+
+        reply, err := getReply(id)
+        if err == sql.ErrNoRows {
+            http.Error(w, "Reply not found", http.StatusNotFound)
+            return
+        }
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Generate CSRF token for reply form
+        now := time.Now().Unix()
+        var relative_expire int64 = 300
+
+        csrfTableMutex.Lock()
+        for token, expire := range csrfTable {
+            if expire < now {
+                delete(csrfTable, token)
+            }
+        }
+        token := generateRandomToken()
+        csrfTable[token] = now + relative_expire
+        csrfTableMutex.Unlock()
+
+        data := map[string]any{
+            "Reply":  reply,
+            "PostID": reply.ParentPost,
+            "csrf":   token,
+        }
+
+        replyTemplate.ExecuteTemplate(w, "base", data)
+    })
+
+    // Serve images from database
     http.HandleFunc("/images/", func(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodGet {
             http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -309,35 +602,6 @@ func main() {
     })
 
     log.Fatal(http.ListenAndServe(":8080", nil))
-}
-
-func getPosts() ([]Post, error) {
-    rows, err := db.Query("SELECT id, title, content, image_filename FROM posts")
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-
-    var posts []Post
-    for rows.Next() {
-        var p Post
-        err := rows.Scan(&p.ID, &p.Title, &p.Content, &p.ImageFilename)
-        if err != nil {
-            return nil, err
-        }
-        posts = append(posts, p)
-    }
-
-    return posts, rows.Err()
-}
-
-func getPost(id int) (*Post, error) {
-    var p Post
-    err := db.QueryRow("SELECT id, title, content, image_filename FROM posts WHERE id = ?", id).Scan(&p.ID, &p.Title, &p.Content, &p.ImageFilename)
-    if err != nil {
-        return nil, err
-    }
-    return &p, nil
 }
 
 // Allowed image extensions
@@ -467,7 +731,7 @@ func validateAndProcessImage(data []byte, originalFilename string) (filename str
 // saveImage stores an image in the database
 func saveImage(filename, contentType string, data []byte, width, height int) error {
     _, err := db.Exec(
-        "INSERT INTO images (filename, content_type, data, width, height) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO Images (filename, content_type, data, width, height) VALUES (?, ?, ?, ?, ?)",
         filename, contentType, data, width, height,
     )
     return err
@@ -477,7 +741,7 @@ func saveImage(filename, contentType string, data []byte, width, height int) err
 func getImage(filename string) (*Image, error) {
     var img Image
     err := db.QueryRow(
-        "SELECT id, filename, content_type, data, width, height, created_at FROM images WHERE filename = ?",
+        "SELECT id, filename, content_type, data, width, height, created_at FROM Images WHERE filename = ?",
         filename,
     ).Scan(&img.ID, &img.Filename, &img.ContentType, &img.Data, &img.Width, &img.Height, &img.CreatedAt)
     if err != nil {

@@ -1,10 +1,34 @@
-{{define "title"}}Indice{{end}}
-{{define "content"}}
-{{range .Posts}}
+{{define "head"}}
+<style>
+    .item {
+        background: #ecf2e9;
+        overflow: auto;
+    }
+    .item-left {
+        float: left;
+    }
+    .item-right {
+        float: left;
+        padding: 5px;
+    }
+    .item-image {
+        width: 200px;
+        float: left;
+    }
+</style>
+{{end}} {{define "title"}}Indice{{end}} {{define "content"}} {{range .Posts}}
 <div class="item">
-    <a href="/post?id={{.ID}}">{{.Title}}</a>
-    <div>{{.Content}}</div>
+    <div class="item-left">
+        {{if .Image}}
+        <img src="/images/{{.Image}}" alt="Post image" class="item-image" />
+        {{end}}
+    </div>
+    <div class="item-right">
+        <a href="/post?id={{.ID}}">{{.Title}}</a>
+        <br />
+        <br />
+        <div class="item-body">{{.Content}}</div>
+    </div>
 </div>
 <br />
-{{end}}
-{{end}}
+{{end}} {{end}}

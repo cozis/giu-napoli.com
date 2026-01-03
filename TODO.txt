@@ -1,1 +1,7 @@
 [X] enable foreign keys in sqlite
+[ ] Image uploads
+[ ] Clean up images:
+        1. Set fixed siz
+        2. Convert to png
+        3. Remove metadata
+        4. Make sure the uploaded file is an image
