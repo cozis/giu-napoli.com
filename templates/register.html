@@ -1,0 +1,25 @@
+{{define "head"}}
+<style>
+    input[type="text"],
+    input[type="password"] {
+        width: 100%;
+    }
+    input[type="submit"] {
+        float: right;
+    }
+</style>
+{{end}} {{define "title"}}Registrati{{end}} {{define "content"}}
+<form action="action-register" method="POST">
+    <input type="hidden" name="csrf" value="{{.csrf}}" />
+    <input type="text" name="username" placeholder="[NOME UTENTE]" />
+    <br />
+    <br />
+    <input type="password" name="password" placeholder="[PASSWORD]" />
+    <br />
+    <br />
+    <input type="password" name="password_confirm" placeholder="[CONFERMA PASSWORD]" />
+    <br />
+    <br />
+    <input type="submit" value="Registrati" />
+</form>
+{{end}}

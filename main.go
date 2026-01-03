@@ -339,6 +339,11 @@ func main() {
         "templates/login.html",
     ))
 
+	registerTemplate := template.Must(template.ParseFiles(
+        "templates/base.html",
+        "templates/register.html",
+    ))
+
     db, err = sql.Open("sqlite3", "./posts.db?_foreign_keys=on")
     if err != nil {
         log.Fatal(err)
@@ -839,6 +844,137 @@ func main() {
             HttpOnly: true,
             SameSite: http.SameSiteStrictMode,
             MaxAge:   -1, // Delete cookie
+        })
+
+        http.Redirect(w, r, "/", http.StatusSeeOther)
+    })
+
+    http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+
+    	now := time.Now().Unix()
+     	var relative_expire int64 = 300
+
+     	csrfTableMutex.Lock()
+		for token, expire := range csrfTable {
+			if expire < now {
+				delete(csrfTable, token)
+			}
+		}
+		token := generateRandomToken()
+      	csrfTable[token] = now + relative_expire
+      	csrfTableMutex.Unlock()
+
+    	data := map[string]any{
+     		"csrf": token,
+     	}
+
+     	registerTemplate.ExecuteTemplate(w, "base", data)
+    })
+
+    http.HandleFunc("/action-register", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+
+        // Parse the form data
+        err := r.ParseForm()
+        if err != nil {
+            http.Error(w, "Bad request", http.StatusBadRequest)
+            return
+        }
+
+        csrf := r.FormValue("csrf")
+        username := r.FormValue("username")
+        password := r.FormValue("password")
+        passwordConfirm := r.FormValue("password_confirm")
+
+        csrfTableMutex.Lock()
+        expire, ok := csrfTable[csrf]
+        delete(csrfTable, csrf)
+        csrfTableMutex.Unlock()
+
+        if !ok || expire < time.Now().Unix() {
+            http.Error(w, "Invalid CSRF token", http.StatusBadRequest)
+            return
+        }
+
+        // Validate
+        if username == "" {
+            http.Error(w, "Username is required", http.StatusBadRequest)
+            return
+        }
+        if len(username) < 3 || len(username) > 32 {
+            http.Error(w, "Username must be between 3 and 32 characters", http.StatusBadRequest)
+            return
+        }
+        if password == "" {
+            http.Error(w, "Password is required", http.StatusBadRequest)
+            return
+        }
+        if len(password) < 8 {
+            http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+            return
+        }
+        if password != passwordConfirm {
+            http.Error(w, "Passwords do not match", http.StatusBadRequest)
+            return
+        }
+
+        // Check if username already exists
+        _, err = getUserByUsername(username)
+        if err == nil {
+            http.Error(w, "Username already taken", http.StatusConflict)
+            return
+        }
+        if err != sql.ErrNoRows {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Hash password
+        passwordHash, err := hashPassword(password)
+        if err != nil {
+            http.Error(w, "Failed to process password", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Create user
+        result, err := db.Exec(
+            "INSERT INTO Users (username, password_hash) VALUES (?, ?)",
+            username, passwordHash,
+        )
+        if err != nil {
+            http.Error(w, "Failed to create user", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        userID, err := result.LastInsertId()
+        if err != nil {
+            http.Error(w, "Failed to create session", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Create session and log in the new user
+        sessionToken, err := createSession(int(userID))
+        if err != nil {
+            http.Error(w, "Failed to create session", http.StatusInternalServerError)
+            log.Println(err)
+            return
+        }
+
+        // Set session cookie
+        http.SetCookie(w, &http.Cookie{
+            Name:     "session",
+            Value:    sessionToken,
+            Path:     "/",
+            HttpOnly: true,
+            SameSite: http.SameSiteStrictMode,
+            MaxAge:   60 * 60 * 24 * 7, // 7 days
         })
 
         http.Redirect(w, r, "/", http.StatusSeeOther)
